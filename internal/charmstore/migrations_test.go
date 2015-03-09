@@ -186,6 +186,7 @@ func (s *migrationsSuite) TestMigrateMigrationList(c *gc.C) {
 		"base entities creation",
 		"read acl creation",
 		"write acl creation",
+		"populate promulgated entities",
 	}
 	for i, name := range existing {
 		m := migrations[i]
@@ -201,8 +202,32 @@ func (s *migrationsSuite) TestMigrateParallelMigration(c *gc.C) {
 	// Prepare a database for the denormalizeEntityIds migration.
 	id1 := charm.MustParseReference("trusty/django-42")
 	id2 := charm.MustParseReference("~who/utopic/rails-47")
-	s.insertEntity(c, id1, "", 12)
-	s.insertEntity(c, id2, "", 13)
+	id3 := charm.MustParseReference("~charmers/trusty/django-18")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id1,
+		BlobHash: "hash1",
+		Size:     12,
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"charmers"`),
+		},
+	}), entity1fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "hash2",
+		Size:     13,
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity1fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id3,
+		BaseURL:  baseURL(id3),
+		BlobHash: "hash1",
+		Size:     12,
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"charmers"`),
+		},
+	}), entity1fields...)
 
 	// Run the migrations in parallel.
 	var wg sync.WaitGroup
@@ -224,24 +249,23 @@ func (s *migrationsSuite) TestMigrateParallelMigration(c *gc.C) {
 
 	// Ensure entities have been updated correctly by denormalizeEntityIds.
 	s.checkCount(c, s.db.Entities(), 2)
-	s.checkEntity(c, &mongodoc.Entity{
-		URL:      id1,
-		BaseURL:  baseURL(id1),
-		User:     "",
-		Name:     "django",
-		Revision: 42,
-		Series:   "trusty",
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id3,
+		BlobHash: "hash1",
 		Size:     12,
-	})
-	s.checkEntity(c, &mongodoc.Entity{
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"charmers"`),
+		},
+		PromulgatedURL: id1,
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
 		URL:      id2,
-		BaseURL:  baseURL(id2),
-		User:     "who",
-		Name:     "rails",
-		Revision: 47,
-		Series:   "utopic",
+		BlobHash: "hash2",
 		Size:     13,
-	})
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
 }
 
 func (s *migrationsSuite) checkExecuted(c *gc.C, expected ...string) {
@@ -272,8 +296,8 @@ func (s *migrationsSuite) TestDenormalizeEntityIds(c *gc.C) {
 	// Store entities with missing name in the db.
 	id1 := charm.MustParseReference("trusty/django-42")
 	id2 := charm.MustParseReference("~who/utopic/rails-47")
-	s.insertEntity(c, id1, "", 12)
-	s.insertEntity(c, id2, "", 13)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 12}), entity1fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 13}), entity1fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -281,24 +305,14 @@ func (s *migrationsSuite) TestDenormalizeEntityIds(c *gc.C) {
 
 	// Ensure entities have been updated correctly.
 	s.checkCount(c, s.db.Entities(), 2)
-	s.checkEntity(c, &mongodoc.Entity{
-		URL:      id1,
-		BaseURL:  baseURL(id1),
-		User:     "",
-		Name:     "django",
-		Revision: 42,
-		Series:   "trusty",
-		Size:     12,
-	})
-	s.checkEntity(c, &mongodoc.Entity{
-		URL:      id2,
-		BaseURL:  baseURL(id2),
-		User:     "who",
-		Name:     "rails",
-		Revision: 47,
-		Series:   "utopic",
-		Size:     13,
-	})
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:  id1,
+		Size: 12,
+	}), entity2fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:  id2,
+		Size: 13,
+	}), entity2fields...)
 }
 
 func (s *migrationsSuite) TestDenormalizeEntityIdsNoEntities(c *gc.C) {
@@ -316,8 +330,14 @@ func (s *migrationsSuite) TestDenormalizeEntityIdsNoUpdates(c *gc.C) {
 	// Store entities with a name in the db.
 	id1 := charm.MustParseReference("trusty/django-42")
 	id2 := charm.MustParseReference("~who/utopic/rails-47")
-	s.insertEntity(c, id1, "django", 21)
-	s.insertEntity(c, id2, "rails2", 22)
+	fields := append(entity2fields, "user", "series", "revision")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 21}), fields...)
+	s.insertEntity(c, &mongodoc.Entity{
+		URL:     id2,
+		BaseURL: baseURL(id2),
+		Name:    "rails2",
+		Size:    22,
+	}, fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -328,12 +348,11 @@ func (s *migrationsSuite) TestDenormalizeEntityIdsNoUpdates(c *gc.C) {
 	s.checkEntity(c, &mongodoc.Entity{
 		URL:     id1,
 		BaseURL: baseURL(id1),
-		User:    "",
-		Name:    "django",
 		// Since the name field already existed, the Revision and Series fields
 		// have not been populated.
+		Name: "django",
 		Size: 21,
-	})
+	}, entity2fields...)
 	s.checkEntity(c, &mongodoc.Entity{
 		URL:     id2,
 		BaseURL: baseURL(id2),
@@ -342,7 +361,7 @@ func (s *migrationsSuite) TestDenormalizeEntityIdsNoUpdates(c *gc.C) {
 		// Since the name field already existed, the User, Revision and Series
 		// fields have not been populated.
 		Size: 22,
-	})
+	}, entity2fields...)
 }
 
 func (s *migrationsSuite) TestDenormalizeEntityIdsSomeUpdates(c *gc.C) {
@@ -351,9 +370,9 @@ func (s *migrationsSuite) TestDenormalizeEntityIdsSomeUpdates(c *gc.C) {
 	id1 := charm.MustParseReference("~dalek/utopic/django-42")
 	id2 := charm.MustParseReference("~dalek/utopic/django-47")
 	id3 := charm.MustParseReference("precise/postgres-0")
-	s.insertEntity(c, id1, "", 1)
-	s.insertEntity(c, id2, "django", 2)
-	s.insertEntity(c, id3, "", 3)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 1}), entity1fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 2}), append(entity2fields, "user", "revision", "series")...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id3, Size: 3}), entity1fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -361,30 +380,23 @@ func (s *migrationsSuite) TestDenormalizeEntityIdsSomeUpdates(c *gc.C) {
 
 	// Ensure entities have been updated correctly.
 	s.checkCount(c, s.db.Entities(), 3)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:  id1,
+		Size: 1,
+	}), entity2fields...)
 	s.checkEntity(c, &mongodoc.Entity{
-		URL:      id1,
-		BaseURL:  baseURL(id1),
-		User:     "dalek",
+		URL:      id2,
+		BaseURL:  baseURL(id2),
 		Name:     "django",
-		Revision: 42,
-		Series:   "utopic",
-		Size:     1,
-	})
-	s.checkEntity(c, &mongodoc.Entity{
-		URL:     id2,
-		BaseURL: baseURL(id2),
-		Name:    "django",
-		Size:    2,
-	})
-	s.checkEntity(c, &mongodoc.Entity{
-		URL:      id3,
-		BaseURL:  baseURL(id3),
 		User:     "",
-		Name:     "postgres",
 		Revision: 0,
-		Series:   "precise",
-		Size:     3,
-	})
+		Series:   "",
+		Size:     2,
+	}, entity2fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:  id3,
+		Size: 3,
+	}), entity2fields...)
 }
 
 func (s *migrationsSuite) TestCreateBaseEntities(c *gc.C) {
@@ -393,9 +405,9 @@ func (s *migrationsSuite) TestCreateBaseEntities(c *gc.C) {
 	id1 := charm.MustParseReference("trusty/django-42")
 	id2 := charm.MustParseReference("trusty/django-47")
 	id3 := charm.MustParseReference("~who/utopic/rails-47")
-	s.insertEntity(c, id1, "django", 12)
-	s.insertEntity(c, id2, "django", 12)
-	s.insertEntity(c, id3, "rails", 13)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 12}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 12}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id3, Size: 13}), entity2fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -403,17 +415,12 @@ func (s *migrationsSuite) TestCreateBaseEntities(c *gc.C) {
 
 	// Ensure base entities have been created correctly.
 	s.checkCount(c, s.db.BaseEntities(), 2)
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id1),
-		Name:   "django",
-		Public: true,
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id3),
-		User:   "who",
-		Name:   "rails",
-		Public: true,
-	})
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id1),
+	}), baseEntity1fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id3),
+	}), baseEntity1fields...)
 }
 
 func (s *migrationsSuite) TestCreateBaseEntitiesNoEntities(c *gc.C) {
@@ -431,10 +438,10 @@ func (s *migrationsSuite) TestCreateBaseEntitiesNoUpdates(c *gc.C) {
 	// Store entities with their corresponding base in the db.
 	id1 := charm.MustParseReference("trusty/django-42")
 	id2 := charm.MustParseReference("~who/utopic/rails-47")
-	s.insertEntity(c, id1, "django", 21)
-	s.insertEntity(c, id2, "rails2", 22)
-	s.insertBaseEntity(c, baseURL(id1), nil)
-	s.insertBaseEntity(c, baseURL(id2), nil)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 21}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 22}), entity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id1)}), baseEntity1fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id2)}), baseEntity1fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -450,10 +457,10 @@ func (s *migrationsSuite) TestCreateBaseEntitiesSomeUpdates(c *gc.C) {
 	id1 := charm.MustParseReference("~dalek/utopic/django-42")
 	id2 := charm.MustParseReference("~dalek/utopic/django-47")
 	id3 := charm.MustParseReference("precise/postgres-0")
-	s.insertEntity(c, id1, "django", 1)
-	s.insertEntity(c, id2, "django", 2)
-	s.insertEntity(c, id3, "postgres", 3)
-	s.insertBaseEntity(c, baseURL(id2), nil)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 1}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 2}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id3, Size: 3}), entity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id2)}), baseEntity1fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -461,17 +468,12 @@ func (s *migrationsSuite) TestCreateBaseEntitiesSomeUpdates(c *gc.C) {
 
 	// Ensure missing base entities have been created correctly.
 	s.checkCount(c, s.db.BaseEntities(), 2)
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id1),
-		User:   "dalek",
-		Name:   "django",
-		Public: true,
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id3),
-		Name:   "postgres",
-		Public: true,
-	})
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id1),
+	}), baseEntity1fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id3),
+	}), baseEntity1fields...)
 }
 
 func (s *migrationsSuite) TestPopulateReadACL(c *gc.C) {
@@ -481,49 +483,39 @@ func (s *migrationsSuite) TestPopulateReadACL(c *gc.C) {
 	id1 := charm.MustParseReference("trusty/django-42")
 	id2 := charm.MustParseReference("trusty/django-47")
 	id3 := charm.MustParseReference("~who/utopic/rails-47")
-	s.insertEntity(c, id1, "django", 12)
-	s.insertEntity(c, id2, "django", 12)
-	s.insertEntity(c, id3, "rails", 13)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 12}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 12}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id3, Size: 13}), entity2fields...)
 	baseId1 := baseURL(id1)
 	baseId3 := baseURL(id3)
-	s.insertBaseEntity(c, baseId1, nil)
-	s.insertBaseEntity(c, baseId3, nil)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseId1}), baseEntity1fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseId3}), baseEntity1fields...)
 
 	// Ensure read permission is empty.
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId1,
-		Name:   "django",
-		Public: true,
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId3,
-		User:   "who",
-		Name:   "rails",
-		Public: true,
-	})
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId1,
+	}), baseEntity1fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId3,
+	}), baseEntity1fields...)
 
 	// Start the server.
 	err := s.newServer(c)
 	c.Assert(err, gc.IsNil)
 
 	// Ensure read permission has been correctly set.
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId1,
-		Name:   "django",
-		Public: true,
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId1,
 		ACLs: mongodoc.ACL{
 			Read: []string{params.Everyone},
 		},
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId3,
-		User:   "who",
-		Name:   "rails",
-		Public: true,
+	}), baseEntity2fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId3,
 		ACLs: mongodoc.ACL{
 			Read: []string{params.Everyone, "who"},
 		},
-	})
+	}), baseEntity2fields...)
 }
 
 func (s *migrationsSuite) TestCreateBaseEntitiesAndPopulateReadACL(c *gc.C) {
@@ -532,9 +524,9 @@ func (s *migrationsSuite) TestCreateBaseEntitiesAndPopulateReadACL(c *gc.C) {
 	id1 := charm.MustParseReference("trusty/django-42")
 	id2 := charm.MustParseReference("trusty/django-47")
 	id3 := charm.MustParseReference("~who/utopic/rails-47")
-	s.insertEntity(c, id1, "django", 12)
-	s.insertEntity(c, id2, "django", 12)
-	s.insertEntity(c, id3, "rails", 13)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 12}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 12}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id3, Size: 13}), entity2fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -542,23 +534,18 @@ func (s *migrationsSuite) TestCreateBaseEntitiesAndPopulateReadACL(c *gc.C) {
 
 	// Ensure base entities have been created correctly.
 	s.checkCount(c, s.db.BaseEntities(), 2)
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id1),
-		Name:   "django",
-		Public: true,
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id1),
 		ACLs: mongodoc.ACL{
 			Read: []string{params.Everyone},
 		},
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id3),
-		User:   "who",
-		Name:   "rails",
-		Public: true,
+	}), baseEntity2fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id3),
 		ACLs: mongodoc.ACL{
 			Read: []string{params.Everyone, "who"},
 		},
-	})
+	}), baseEntity2fields...)
 }
 
 func (s *migrationsSuite) TestPopulateReadACLNoEntities(c *gc.C) {
@@ -576,14 +563,20 @@ func (s *migrationsSuite) TestPopulateReadACLNoUpdates(c *gc.C) {
 	// Store entities with their corresponding base in the db.
 	id1 := charm.MustParseReference("trusty/django-42")
 	id2 := charm.MustParseReference("~who/utopic/rails-47")
-	s.insertEntity(c, id1, "django", 21)
-	s.insertEntity(c, id2, "rails2", 22)
-	s.insertBaseEntity(c, baseURL(id1), &mongodoc.ACL{
-		Read: []string{"jean-luc"},
-	})
-	s.insertBaseEntity(c, baseURL(id2), &mongodoc.ACL{
-		Read: []string{"who"},
-	})
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 21}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 22}), entity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id1),
+		ACLs: mongodoc.ACL{
+			Read: []string{"jean-luc"},
+		},
+	}), baseEntity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id2),
+		ACLs: mongodoc.ACL{
+			Read: []string{"who"},
+		},
+	}), baseEntity2fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -592,23 +585,18 @@ func (s *migrationsSuite) TestPopulateReadACLNoUpdates(c *gc.C) {
 	// Ensure no new base entities are added in the process, and read
 	// permissions were not changed.
 	s.checkCount(c, s.db.BaseEntities(), 2)
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id1),
-		Name:   "django",
-		Public: true,
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id1),
 		ACLs: mongodoc.ACL{
 			Read: []string{"jean-luc"},
 		},
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id2),
-		User:   "who",
-		Name:   "rails",
-		Public: true,
+	}), baseEntity2fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id2),
 		ACLs: mongodoc.ACL{
 			Read: []string{"who"},
 		},
-	})
+	}), baseEntity2fields...)
 }
 
 func (s *migrationsSuite) TestPopulateReadACLSomeUpdates(c *gc.C) {
@@ -617,15 +605,18 @@ func (s *migrationsSuite) TestPopulateReadACLSomeUpdates(c *gc.C) {
 	id1 := charm.MustParseReference("~dalek/utopic/django-42")
 	id2 := charm.MustParseReference("~dalek/utopic/django-47")
 	id3 := charm.MustParseReference("precise/postgres-0")
-	s.insertEntity(c, id1, "django", 1)
-	s.insertEntity(c, id2, "django", 2)
-	s.insertEntity(c, id3, "postgres", 3)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 1}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 2}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id3, Size: 3}), entity2fields...)
 	baseId1 := baseURL(id1)
 	baseId3 := baseURL(id3)
-	s.insertBaseEntity(c, baseId1, nil)
-	s.insertBaseEntity(c, baseId3, &mongodoc.ACL{
-		Read: []string{"benjamin"},
-	})
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseId1}), baseEntity1fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId3,
+		ACLs: mongodoc.ACL{
+			Read: []string{"benjamin"},
+		},
+	}), baseEntity2fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -633,23 +624,18 @@ func (s *migrationsSuite) TestPopulateReadACLSomeUpdates(c *gc.C) {
 
 	// Ensure missing read permissions have been populated correctly.
 	s.checkCount(c, s.db.BaseEntities(), 2)
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId1,
-		User:   "dalek",
-		Name:   "django",
-		Public: true,
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId1,
 		ACLs: mongodoc.ACL{
 			Read: []string{params.Everyone, "dalek"},
 		},
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId3,
-		Name:   "postgres",
-		Public: true,
+	}), baseEntity2fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId3,
 		ACLs: mongodoc.ACL{
 			Read: []string{"benjamin"},
 		},
-	})
+	}), baseEntity2fields...)
 }
 
 func (s *migrationsSuite) TestPopulateWriteACL(c *gc.C) {
@@ -659,51 +645,39 @@ func (s *migrationsSuite) TestPopulateWriteACL(c *gc.C) {
 	id1 := charm.MustParseReference("~who/trusty/django-42")
 	id2 := charm.MustParseReference("~who/django-47")
 	id3 := charm.MustParseReference("~dalek/utopic/rails-47")
-	s.insertEntity(c, id1, "django", 12)
-	s.insertEntity(c, id2, "django", 12)
-	s.insertEntity(c, id3, "rails", 13)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 12}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 12}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id3, Size: 13}), entity2fields...)
 	baseId1 := baseURL(id1)
 	baseId3 := baseURL(id3)
-	s.insertBaseEntity(c, baseId1, nil)
-	s.insertBaseEntity(c, baseId3, nil)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseId1}), baseEntity1fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseId3}), baseEntity1fields...)
 
 	// Ensure write permission is empty.
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId1,
-		User:   "who",
-		Name:   "django",
-		Public: true,
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId3,
-		User:   "dalek",
-		Name:   "rails",
-		Public: true,
-	})
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId1,
+	}), baseEntity1fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId3,
+	}), baseEntity1fields...)
 
 	// Start the server.
 	err := s.newServer(c)
 	c.Assert(err, gc.IsNil)
 
 	// Ensure write permission has been correctly set.
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId1,
-		User:   "who",
-		Name:   "django",
-		Public: true,
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId1,
 		ACLs: mongodoc.ACL{
 			Write: []string{"who"},
 		},
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId3,
-		User:   "dalek",
-		Name:   "rails",
-		Public: true,
+	}), baseEntity2fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId3,
 		ACLs: mongodoc.ACL{
 			Write: []string{"dalek"},
 		},
-	})
+	}), baseEntity2fields...)
 }
 
 func (s *migrationsSuite) TestPopulateWriteACLNoEntities(c *gc.C) {
@@ -721,12 +695,15 @@ func (s *migrationsSuite) TestPopulateWriteACLNoUpdates(c *gc.C) {
 	// Store entities with their corresponding base in the db.
 	id1 := charm.MustParseReference("trusty/django-42")
 	id2 := charm.MustParseReference("~who/utopic/rails-47")
-	s.insertEntity(c, id1, "django", 21)
-	s.insertEntity(c, id2, "rails2", 22)
-	s.insertBaseEntity(c, baseURL(id1), nil)
-	s.insertBaseEntity(c, baseURL(id2), &mongodoc.ACL{
-		Write: []string{"dalek"},
-	})
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 21}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 22}), entity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id1)}), baseEntity1fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id2),
+		ACLs: mongodoc.ACL{
+			Write: []string{"dalek"},
+		},
+	}), baseEntity2fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -735,20 +712,15 @@ func (s *migrationsSuite) TestPopulateWriteACLNoUpdates(c *gc.C) {
 	// Ensure no new base entities are added in the process, and write
 	// permissions were not changed.
 	s.checkCount(c, s.db.BaseEntities(), 2)
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id1),
-		Name:   "django",
-		Public: true,
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseURL(id2),
-		User:   "who",
-		Name:   "rails",
-		Public: true,
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id1),
+	}), baseEntity2fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id2),
 		ACLs: mongodoc.ACL{
 			Write: []string{"dalek"},
 		},
-	})
+	}), baseEntity2fields...)
 }
 
 func (s *migrationsSuite) TestPopulateWriteACLSomeUpdates(c *gc.C) {
@@ -757,15 +729,18 @@ func (s *migrationsSuite) TestPopulateWriteACLSomeUpdates(c *gc.C) {
 	id1 := charm.MustParseReference("~dalek/utopic/django-42")
 	id2 := charm.MustParseReference("~dalek/utopic/django-47")
 	id3 := charm.MustParseReference("~jean-luc/precise/postgres-0")
-	s.insertEntity(c, id1, "django", 1)
-	s.insertEntity(c, id2, "django", 2)
-	s.insertEntity(c, id3, "postgres", 3)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id1, Size: 1}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id2, Size: 2}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{URL: id3, Size: 3}), entity2fields...)
 	baseId1 := baseURL(id1)
 	baseId3 := baseURL(id3)
-	s.insertBaseEntity(c, baseId1, nil)
-	s.insertBaseEntity(c, baseId3, &mongodoc.ACL{
-		Write: []string{"benjamin"},
-	})
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseId1}), baseEntity1fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId3,
+		ACLs: mongodoc.ACL{
+			Write: []string{"benjamin"},
+		},
+	}), baseEntity2fields...)
 
 	// Start the server.
 	err := s.newServer(c)
@@ -773,34 +748,595 @@ func (s *migrationsSuite) TestPopulateWriteACLSomeUpdates(c *gc.C) {
 
 	// Ensure missing write permissions have been populated correctly.
 	s.checkCount(c, s.db.BaseEntities(), 2)
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId1,
-		User:   "dalek",
-		Name:   "django",
-		Public: true,
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId1,
 		ACLs: mongodoc.ACL{
 			Write: []string{"dalek"},
 		},
-	})
-	s.checkBaseEntity(c, &mongodoc.BaseEntity{
-		URL:    baseId3,
-		User:   "jean-luc",
-		Name:   "postgres",
-		Public: true,
+	}), baseEntity2fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseId3,
 		ACLs: mongodoc.ACL{
 			Write: []string{"benjamin"},
 		},
-	})
+	}), baseEntity2fields...)
 }
 
-func (s *migrationsSuite) checkEntity(c *gc.C, expectEntity *mongodoc.Entity) {
-	var entity mongodoc.Entity
-	err := s.db.Entities().FindId(expectEntity.URL).One(&entity)
+func (s *migrationsSuite) TestPopulatePromulgatedEntities(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+	id1 := charm.MustParseReference("trusty/django-42")
+	id2 := charm.MustParseReference("~who/utopic/rails-47")
+	id3 := charm.MustParseReference("~who/trusty/django-42")
+	id4 := charm.MustParseReference("~dalek/trusty/django-42")
+	id5 := charm.MustParseReference("~ace/utopic/rails-47")
+	id6 := charm.MustParseReference("~who/trusty/django-41")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id1,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id3,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id4,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"dalek"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id5,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"ace"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id6,
+		BlobHash: "django-2",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity2fields...)
+
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id1)}), baseEntity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id2)}), baseEntity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id3)}), baseEntity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id4)}), baseEntity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id5)}), baseEntity2fields...)
+
+	// Start the server.
+	err := s.newServer(c)
+	c.Assert(err, gc.IsNil)
+
+	// Ensure entities have been updated correctly.
+	s.checkCount(c, s.db.Entities(), 5)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:            id3,
+		BlobHash:       "django-1",
+		PromulgatedURL: id1,
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id4,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"dalek"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id5,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"ace"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id6,
+		BlobHash: "django-2",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+
+	s.checkCount(c, s.db.BaseEntities(), 4)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id2),
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL:         baseURL(id3),
+		Promulgated: true,
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id4),
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id5),
+	}), baseEntity3fields...)
+}
+
+func (s *migrationsSuite) TestPopulatePromulgatedEntitiesNoEntities(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+	// Start the server.
+	err := s.newServer(c)
+	c.Assert(err, gc.IsNil)
+
+	// Ensure no new entities are added in the process.
+	s.checkCount(c, s.db.Entities(), 0)
+}
+
+func (s *migrationsSuite) TestPopulatePromulgatedEntitiesNoUpdates(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+	id1 := charm.MustParseReference("trusty/django-42")
+	id2 := charm.MustParseReference("~who/utopic/rails-47")
+	id3 := charm.MustParseReference("~who/trusty/django-42")
+	id4 := charm.MustParseReference("~dalek/trusty/django-42")
+	id5 := charm.MustParseReference("~ace/utopic/rails-47")
+	id6 := charm.MustParseReference("~who/trusty/django-41")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id3,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+		PromulgatedURL:      id1,
+		PromulgatedRevision: id1.Revision,
+	}), entity3fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id4,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"dalek"`),
+		},
+	}), entity3fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id5,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"ace"`),
+		},
+	}), entity3fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id6,
+		BlobHash: "django-2",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id2)}), baseEntity3fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL:         baseURL(id3),
+		Promulgated: true,
+	}), baseEntity3fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id4)}), baseEntity3fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id5)}), baseEntity3fields...)
+
+	// Start the server.
+	err := s.newServer(c)
+	c.Assert(err, gc.IsNil)
+
+	// Ensure entities have not been changed.
+	s.checkCount(c, s.db.Entities(), 5)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:            id3,
+		BlobHash:       "django-1",
+		PromulgatedURL: id1,
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id4,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"dalek"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id5,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"ace"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id6,
+		BlobHash: "django-2",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+
+	s.checkCount(c, s.db.BaseEntities(), 4)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id2),
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL:         baseURL(id3),
+		Promulgated: true,
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id4),
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id5),
+	}), baseEntity3fields...)
+}
+
+func (s *migrationsSuite) TestPopulatePromulgatedEntitiesSomeUpdates(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+	id1 := charm.MustParseReference("trusty/django-42")
+	id2 := charm.MustParseReference("~who/utopic/rails-47")
+	id3 := charm.MustParseReference("~who/trusty/django-42")
+	id4 := charm.MustParseReference("~dalek/trusty/django-42")
+	id5 := charm.MustParseReference("~ace/utopic/rails-47")
+	id6 := charm.MustParseReference("~who/trusty/django-41")
+	id7 := charm.MustParseReference("trusty/django-41")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id1,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id3,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id4,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"dalek"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id5,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"ace"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id6,
+		BlobHash: "django-2",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+		PromulgatedURL: id7,
+	}), entity3fields...)
+
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id1)}), baseEntity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id2)}), baseEntity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL:         baseURL(id3),
+		Promulgated: true,
+	}), baseEntity3fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id4)}), baseEntity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id5)}), baseEntity2fields...)
+
+	// Start the server.
+	err := s.newServer(c)
+	c.Assert(err, gc.IsNil)
+
+	// Ensure entities have been updated correctly.
+	s.checkCount(c, s.db.Entities(), 5)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:            id3,
+		BlobHash:       "django-1",
+		PromulgatedURL: id1,
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id4,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"dalek"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id5,
+		BlobHash: "rails-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"ace"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:            id6,
+		BlobHash:       "django-2",
+		PromulgatedURL: id7,
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"who"`),
+		},
+	}), entity3fields...)
+
+	s.checkCount(c, s.db.BaseEntities(), 4)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id2),
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL:         baseURL(id3),
+		Promulgated: true,
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id4),
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: baseURL(id5),
+	}), baseEntity3fields...)
+}
+
+func (s *migrationsSuite) TestPopulatePromulgatedEntitiesNoBzrOwner(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+	id1 := charm.MustParseReference("trusty/django-42")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:       id1,
+		BlobHash:  "django-1",
+		ExtraInfo: map[string][]byte{},
+	}), entity2fields...)
+
+	err := s.newServer(c)
+	c.Assert(err, gc.ErrorMatches, "database migration failed: error executing migration: populate promulgated entities: cannot unmarshal user from extra-info: unexpected end of JSON input")
+}
+
+func (s *migrationsSuite) TestPopulatePromulgatedEntitiesBlankBzrOwner(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+	id1 := charm.MustParseReference("trusty/django-42")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id1,
+		BlobHash: "django-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`""`),
+		},
+	}), entity2fields...)
+
+	err := s.newServer(c)
+	c.Assert(err, gc.ErrorMatches, `database migration failed: error executing migration: populate promulgated entities: no user for "cs:trusty/django-42"`)
+}
+
+func (s *migrationsSuite) TestPopulatePromulgatedEntitiesUpdatesBaseEntities(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+
+	id1 := charm.MustParseReference("~tom/wordpress")
+	id2 := charm.MustParseReference("~dick/wordpress")
+	id3 := charm.MustParseReference("~harry/wordpress")
+	err := s.db.BaseEntities().Insert(bson.D{
+		{"_id", id1},
+		{"user", id1.User},
+		{"name", id1.Name},
+		{"public", true},
+		{"promulgated", true},
+	})
+	c.Assert(err, gc.IsNil)
+	err = s.db.BaseEntities().Insert(bson.D{
+		{"_id", id2},
+		{"user", id2.User},
+		{"name", id2.Name},
+		{"public", true},
+		{"promulgated", false},
+	})
+	c.Assert(err, gc.IsNil)
+	err = s.db.BaseEntities().Insert(bson.D{
+		{"_id", id3},
+		{"user", id3.User},
+		{"name", id3.Name},
+		{"public", true},
+	})
+	c.Assert(err, gc.IsNil)
+
+	err = s.newServer(c)
+	c.Assert(err, gc.IsNil)
+
+	// Check the updated base entities
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: id1,
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: id2,
+	}), baseEntity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL: id3,
+	}), baseEntity3fields...)
+}
+
+func (s *migrationsSuite) TestPopulatePromulgatedEntitiesErrorIfNoEntityFound(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+
+	id1 := charm.MustParseReference("trusty/wordpress-12")
+	id2 := charm.MustParseReference("~not-charmers/trusty/wordpress-12")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id1,
+		BlobHash: "wordpress-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"charmers"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "wordpress-2",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"charmers"`),
+		},
+	}), entity2fields...)
+
+	err := s.newServer(c)
+	c.Assert(err, gc.ErrorMatches, `database migration failed: error executing migration: populate promulgated entities: cannot update entity for promulgated charm or bundle "cs:trusty/wordpress-12": not found`)
+}
+
+func (s *migrationsSuite) TestPopulatePromulgatedEntitiesErrorIfEntityAlreadyInUse(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+
+	id1 := charm.MustParseReference("trusty/wordpress-12")
+	id2 := charm.MustParseReference("~charmers/trusty/wordpress-12")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id1,
+		BlobHash: "wordpress-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"charmers"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "wordpress-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"charmers"`),
+		},
+		PromulgatedURL: charm.MustParseReference("trusty/wordpress-11"),
+	}), entity3fields...)
+
+	err := s.newServer(c)
+	c.Assert(err, gc.ErrorMatches, `database migration failed: error executing migration: populate promulgated entities: cannot update entity for promulgated charm or bundle "cs:trusty/wordpress-12": not found`)
+}
+
+func (s *migrationsSuite) TestPopulatePromulgatedEntitiesFallbackToCharmersIfOwnerNotFound(c *gc.C) {
+	s.patchMigrations(c, getMigrations("populate promulgated entities"))
+
+	id1 := charm.MustParseReference("trusty/wordpress-12")
+	id2 := charm.MustParseReference("trusty/wordpress-13")
+	id3 := charm.MustParseReference("~charmers/trusty/wordpress-12")
+	id4 := charm.MustParseReference("~not-charmers/trusty/wordpress-13")
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id1,
+		BlobHash: "wordpress-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"not-charmers"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id2,
+		BlobHash: "wordpress-2",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"not-charmers"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id3,
+		BlobHash: "wordpress-1",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"charmers"`),
+		},
+	}), entity2fields...)
+	s.insertEntity(c, fillEntity(&mongodoc.Entity{
+		URL:      id4,
+		BlobHash: "wordpress-2",
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"not-charmers"`),
+		},
+	}), entity2fields...)
+	s.insertBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{URL: baseURL(id4)}), baseEntity2fields...)
+	err := s.newServer(c)
+	c.Assert(err, gc.IsNil)
+
+	s.checkCount(c, s.db.Entities(), 2)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:            id3,
+		BlobHash:       "wordpress-1",
+		PromulgatedURL: id1,
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"charmers"`),
+		},
+	}), entity3fields...)
+	s.checkEntity(c, fillEntity(&mongodoc.Entity{
+		URL:            id4,
+		BlobHash:       "wordpress-2",
+		PromulgatedURL: id2,
+		ExtraInfo: map[string][]byte{
+			"bzr-owner": []byte(`"not-charmers"`),
+		},
+	}), entity3fields...)
+	s.checkBaseEntity(c, fillBaseEntity(&mongodoc.BaseEntity{
+		URL:         baseURL(id4),
+		Promulgated: mongodoc.IntBool(true),
+	}), baseEntity3fields...)
+}
+
+func (s *migrationsSuite) checkEntity(c *gc.C, expectEntity *mongodoc.Entity, fields ...string) {
+	var expect, obtained mongodoc.Entity
+	expect = *expectEntity
+	// zero any fields in expect that are not expected to be present.
+	for _, f := range fields {
+		if f == "promulgated-revision" {
+			expect.PromulgatedRevision = 0
+		}
+		if f == "promulgated-url" {
+			expect.PromulgatedURL = nil
+		}
+		if f == "name" {
+			expect.Name = ""
+		}
+		if f == "revision" {
+			expect.Revision = 0
+		}
+		if f == "series" {
+			expect.Series = ""
+		}
+		if f == "user" {
+			expect.User = ""
+		}
+	}
+	err := s.db.Entities().FindId(expectEntity.URL).One(&obtained)
 	c.Assert(err, gc.IsNil)
 
 	// Ensure that the denormalized fields are now present, and the previously
 	// existing fields are still there.
-	c.Assert(&entity, jc.DeepEquals, expectEntity)
+	c.Assert(obtained, jc.DeepEquals, expect)
 }
 
 func (s *migrationsSuite) checkCount(c *gc.C, coll *mgo.Collection, expectCount int) {
@@ -809,62 +1345,122 @@ func (s *migrationsSuite) checkCount(c *gc.C, coll *mgo.Collection, expectCount 
 	c.Assert(count, gc.Equals, expectCount)
 }
 
-func (s *migrationsSuite) checkBaseEntity(c *gc.C, expectEntity *mongodoc.BaseEntity) {
-	var entity mongodoc.BaseEntity
-	err := s.db.BaseEntities().FindId(expectEntity.URL).One(&entity)
-	c.Assert(err, gc.IsNil)
-	c.Assert(&entity, jc.DeepEquals, expectEntity)
-}
-
-func (s *migrationsSuite) checkBaseEntitiesCount(c *gc.C, expectCount int) {
-	count, err := s.db.Entities().Count()
-	c.Assert(err, gc.IsNil)
-	c.Assert(count, gc.Equals, expectCount)
-}
-
-func (s *migrationsSuite) insertEntity(c *gc.C, id *charm.Reference, name string, size int64) {
-	entity := &mongodoc.Entity{
-		URL:     id,
-		BaseURL: baseURL(id),
-		Name:    name,
-		Size:    size,
+func (s *migrationsSuite) checkBaseEntity(c *gc.C, expectEntity *mongodoc.BaseEntity, fields ...string) {
+	var expect, obtained mongodoc.BaseEntity
+	expect = *expectEntity
+	// zero any fields in expect that are not expected to be present.
+	for _, f := range fields {
+		if f == "promulgated" {
+			expect.Promulgated = false
+		}
+		if f == "public" {
+			expect.Public = false
+		}
+		if f == "acls" {
+			expect.ACLs = mongodoc.ACL{}
+		}
 	}
+	err := s.db.BaseEntities().FindId(expectEntity.URL).One(&obtained)
+	c.Assert(err, gc.IsNil)
+	c.Assert(obtained, jc.DeepEquals, expect)
+}
+
+// fillEntity updates the provided mongodoc.Entity filling in
+// the following fields with values derived from URL and
+// PromulgatedURL:
+//
+//     BaseURL
+//     Name
+//     Revision
+//     Series
+//     User
+//     PromulgatedRevision
+//
+// The provided entity is returned by this function.
+func fillEntity(e *mongodoc.Entity) *mongodoc.Entity {
+	e.BaseURL = baseURL(e.URL)
+	e.Name = e.URL.Name
+	e.Revision = e.URL.Revision
+	e.Series = e.URL.Series
+	e.User = e.URL.User
+	if e.PromulgatedURL != nil {
+		e.PromulgatedRevision = e.PromulgatedURL.Revision
+	} else {
+		e.PromulgatedRevision = -1
+	}
+	return e
+}
+
+// insertEntity creates a new entity in the database based on the
+// provided mongodoc.Entity.
+//
+// After insertion any name in fields will be removed from the inserted
+// document.
+func (s *migrationsSuite) insertEntity(c *gc.C, entity *mongodoc.Entity, fields ...string) {
 	err := s.db.Entities().Insert(entity)
 	c.Assert(err, gc.IsNil)
 
-	// Remove the denormalized fields if required.
-	if name != "" {
+	// Remove required fields
+	var remove bson.D
+	for _, f := range fields {
+		remove = append(remove, bson.DocElem{f, true})
+	}
+	if len(remove) == 0 {
 		return
 	}
-	err = s.db.Entities().UpdateId(id, bson.D{{
-		"$unset", bson.D{
-			{"user", true},
-			{"name", true},
-			{"revision", true},
-			{"series", true},
-		},
-	}})
+	err = s.db.Entities().UpdateId(entity.URL, bson.D{{"$unset", remove}})
 	c.Assert(err, gc.IsNil)
 }
 
-func (s *migrationsSuite) insertBaseEntity(c *gc.C, id *charm.Reference, acls *mongodoc.ACL) {
-	entity := &mongodoc.BaseEntity{
-		URL:    id,
-		Name:   id.Name,
-		User:   id.User,
-		Public: true,
-	}
-	if acls != nil {
-		entity.ACLs = *acls
-	}
-	err := s.db.BaseEntities().Insert(entity)
+// Standard entity versions. These are lists of fields that can be used with
+// insertEntity to create database documents from previous deployments.
+var (
+	entity3fields = []string{}
+	entity2fields = append([]string{"promulgated-url", "promulgated-revision"}, entity3fields...)
+	entity1fields = append([]string{"name", "revision", "series", "user"}, entity2fields...)
+)
+
+// fillBaseEntity updates the provided mongodoc.BaseEntity filling in
+// the following fields with values derived from URL:
+//
+//     Name
+//     User
+//     Public (always set true)
+//
+// The provided base entity is returned by this function.
+func fillBaseEntity(e *mongodoc.BaseEntity) *mongodoc.BaseEntity {
+	e.Name = e.URL.Name
+	e.User = e.URL.User
+	e.Public = true
+	return e
+}
+
+// insertBaseEntity creates a new base entity in the database based on the
+// provided mongodoc.BaseEntity.
+//
+// After insertion any name in fields will be removed from the inserted
+// document.
+func (s *migrationsSuite) insertBaseEntity(c *gc.C, baseEntity *mongodoc.BaseEntity, fields ...string) {
+	err := s.db.BaseEntities().Insert(baseEntity)
 	c.Assert(err, gc.IsNil)
 
-	// Unset the ACL fields if required to simulate a migration.
-	if acls == nil {
-		err = s.db.BaseEntities().UpdateId(id, bson.D{{"$unset",
-			bson.D{{"acls", true}},
-		}})
-		c.Assert(err, gc.IsNil)
+	// Remove required fields
+	var remove bson.D
+	for _, f := range fields {
+		remove = append(remove, bson.DocElem{f, true})
 	}
+	if len(remove) == 0 {
+		return
+	}
+	err = s.db.BaseEntities().UpdateId(baseEntity.URL, bson.D{{"$unset", remove}})
+	c.Assert(err, gc.IsNil)
 }
+
+// Standard base entity versions. These are lists of fields that can be
+// used with insertBaseEntity to create database documents from previous
+// deployments.
+var (
+	baseEntity3fields = []string{}
+	baseEntity2fields = append([]string{"promulgated"}, baseEntity3fields...)
+	baseEntity1fields = append([]string{"acls"}, baseEntity2fields...)
+)
