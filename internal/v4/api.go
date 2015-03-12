@@ -6,6 +6,7 @@ package v4
 import (
 	"archive/zip"
 	"encoding/json"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -58,13 +59,14 @@ func New(store *charmstore.Store, config charmstore.ServerParams) *Handler {
 			"macaroon":           router.HandleJSON(h.serveMacaroon),
 		},
 		Id: map[string]router.IdHandler{
-			"archive":     h.serveArchive,
-			"archive/":    h.serveArchiveFile,
-			"diagram.svg": h.serveDiagram,
-			"expand-id":   h.serveExpandId,
-			"icon.svg":    h.serveIcon,
-			"readme":      h.serveReadMe,
-			"resources":   h.serveResources,
+			"archive":     h.idHandler(h.serveArchive),
+			"archive/":    h.idHandler(h.serveArchiveFile),
+			"diagram.svg": h.idHandler(h.serveDiagram),
+			"expand-id":   h.idHandler(h.serveExpandId),
+			"icon.svg":    h.idHandler(h.serveIcon),
+			"readme":      h.idHandler(h.serveReadMe),
+			"resources":   h.idHandler(h.serveResources),
+			"promulgate":  h.serveAdminPromulgate,
 		},
 		Meta: map[string]router.BulkIncludeHandler{
 			"archive-size":         h.entityHandler(h.metaArchiveSize, "size"),
@@ -97,6 +99,7 @@ func New(store *charmstore.Store, config charmstore.ServerParams) *Handler {
 			"manifest":      h.entityHandler(h.metaManifest, "blobname"),
 			"perm":          h.puttableBaseEntityHandler(h.metaPerm, h.putMetaPerm, "acls"),
 			"perm/":         h.puttableBaseEntityHandler(h.metaPermWithKey, h.putMetaPermWithKey, "acls"),
+			"promulgated":   h.baseEntityHandler(h.metaPromulgated, "promulgated"),
 			"revision-info": router.SingleIncludeHandler(h.metaRevisionInfo),
 			"stats":         h.entityHandler(h.metaStats),
 			"tags":          h.entityHandler(h.metaTags, "charmmeta", "bundledata"),
@@ -707,6 +710,14 @@ func (h *Handler) putMetaPerm(id *charm.Reference, path string, val *json.RawMes
 	return nil
 }
 
+// GET id/meta/promulgated
+// TODO doc link
+func (h *Handler) metaPromulgated(entity *mongodoc.BaseEntity, id *charm.Reference, path string, flags url.Values, req *http.Request) (interface{}, error) {
+	return params.PromulgatedResponse{
+		Promulgated: bool(entity.Promulgated),
+	}, nil
+}
+
 // GET id/meta/perm/key
 // https://github.com/juju/charmstore/blob/v4/docs/API.md#get-idmetapermkey
 func (h *Handler) metaPermWithKey(entity *mongodoc.BaseEntity, id *charm.Reference, path string, flags url.Values, req *http.Request) (interface{}, error) {
@@ -814,4 +825,45 @@ func (h *Handler) serveChangesPublished(_ http.Header, r *http.Request) (interfa
 // TODO: document macaroon endpoint in the API doc.
 func (h *Handler) serveMacaroon(_ http.Header, _ *http.Request) (interface{}, error) {
 	return h.newMacaroon()
+}
+
+// GET id/promulgate
+// TODO (mhilton): document admin/promulgate endpoint
+func (h *Handler) serveAdminPromulgate(id *charm.Reference, _ bool, w http.ResponseWriter, req *http.Request) error {
+	if err := h.authorize(req, []string{"promulgators"}); err != nil {
+		return errgo.Mask(err, errgo.Any)
+	}
+	if req.Method != "PUT" {
+		return errgo.WithCausef(nil, params.ErrMethodNotAllowed, "%s not allowed", req.Method)
+	}
+	data, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		return errgo.Mask(err)
+	}
+	var promulgate params.PromulgateRequest
+	if err := json.Unmarshal(data, &promulgate); err != nil {
+		return errgo.WithCausef(err, params.ErrBadRequest, "")
+	}
+	if promulgate.Promulgate {
+		if err := h.store.Promulgate(id); err != nil {
+			return errgo.Mask(err, errgo.Any)
+		}
+	} else {
+		if err := h.store.UpdateBaseEntity(id, bson.D{{"$set", bson.D{{"promulgated", mongodoc.IntBool(false)}}}}); err != nil {
+			return errgo.Mask(err, errgo.Any)
+		}
+	}
+	return nil
+}
+
+func (h *Handler) idHandler(f router.IdHandler) router.IdHandler {
+	return func(charmId *charm.Reference, fullySpecified bool, w http.ResponseWriter, req *http.Request) error {
+		if err := h.authorizeEntity(charmId, req); err != nil {
+			return errgo.Mask(err, errgo.Any)
+		}
+		if err := f(charmId, fullySpecified, w, req); err != nil {
+			return errgo.Mask(err, errgo.Any)
+		}
+		return nil
+	}
 }

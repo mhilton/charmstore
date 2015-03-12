@@ -190,6 +190,18 @@ type PermRequest struct {
 	Write []string
 }
 
+// PromulgatedResponse holds the result of an id/meta/promulgated GET request.
+// See TODO(mhilton)
+type PromulgatedResponse struct {
+	Promulgated bool
+}
+
+// PromulgateRequest holds the request of an id/restricted/promulgate PUT request.
+// See TODO(mhilton)
+type PromulgateRequest struct {
+	Promulgate bool
+}
+
 const (
 	// BzrDigestKey is the extra-info key used to store the Bazaar digest
 	BzrDigestKey = "bzr-digest"

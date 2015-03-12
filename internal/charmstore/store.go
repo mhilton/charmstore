@@ -523,7 +523,7 @@ func (s *Store) UpdateBaseEntity(url *charm.Reference, update interface{}) error
 // user. As promulgation is a rare operation, it is considered that the
 // chances this will happen are slim.
 func (s *Store) Promulgate(url *charm.Reference) error {
-	entity, err := s.FindEntity(url)
+	entity, err := s.FindBestEntity(url)
 	if err != nil {
 		return errgo.Mask(err, errgo.Any)
 	}

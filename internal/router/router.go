@@ -241,9 +241,6 @@ func (r *Router) serveIds(w http.ResponseWriter, req *http.Request) error {
 	}
 	if handler != nil {
 		req.URL.Path = path
-		if err := r.authorize(url, req); err != nil {
-			return errgo.Mask(err, errgo.Any)
-		}
 		err := handler(url, fullySpecified, w, req)
 		// Note: preserve error cause from handlers.
 		return errgo.Mask(err, errgo.Any)
