@@ -41,7 +41,7 @@ import (
 	"gopkg.in/juju/charmstore.v4/params"
 )
 
-var publicKey = bakery.PublicKey{
+var testPublicKey = bakery.PublicKey{
 	bakery.Key{
 		0xf6, 0xfb, 0xcf, 0x67, 0x8c, 0x5a, 0xb6, 0x52,
 		0xa9, 0x23, 0x4d, 0x7e, 0x01, 0xf5, 0x0a, 0x25,
@@ -2091,10 +2091,10 @@ var promulgateTests = []struct {
 }{{
 	about: "unpromulgate base entity",
 	entities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	baseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 	id:           "~charmers/wordpress",
 	body:         storetesting.JSONReader(params.PromulgateRequest{Promulgate: false}),
@@ -2102,7 +2102,7 @@ var promulgateTests = []struct {
 	password:     serverParams.AuthPassword,
 	expectStatus: http.StatusOK,
 	expectEntities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	expectBaseEntities: []*mongodoc.BaseEntity{
 		storetesting.NewBaseEntity("~charmers/wordpress").Build(),
@@ -2121,18 +2121,18 @@ var promulgateTests = []struct {
 	password:     serverParams.AuthPassword,
 	expectStatus: http.StatusOK,
 	expectEntities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	expectBaseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 }, {
 	about: "unpromulgate base entity not found",
 	entities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	baseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 	id:           "~charmers/mysql",
 	body:         storetesting.JSONReader(params.PromulgateRequest{Promulgate: false}),
@@ -2141,13 +2141,13 @@ var promulgateTests = []struct {
 	expectStatus: http.StatusNotFound,
 	expectBody: params.Error{
 		Code:    params.ErrNotFound,
-		Message: `cannot update base entity for "cs:~charmers/mysql": not found`,
+		Message: `entity not found`,
 	},
 	expectEntities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	expectBaseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 }, {
 	about: "promulgate base entity not found",
@@ -2175,10 +2175,10 @@ var promulgateTests = []struct {
 }, {
 	about: "bad method",
 	entities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	baseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 	id:           "~charmers/wordpress",
 	body:         storetesting.JSONReader(params.PromulgateRequest{Promulgate: false}),
@@ -2191,18 +2191,18 @@ var promulgateTests = []struct {
 		Message: "POST not allowed",
 	},
 	expectEntities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	expectBaseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 }, {
 	about: "bad JSON",
 	entities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	baseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 	id:           "~charmers/wordpress",
 	body:         bytes.NewReader([]byte("tru")),
@@ -2214,18 +2214,18 @@ var promulgateTests = []struct {
 		Message: "bad request: invalid character ' ' in literal true (expecting 'e')",
 	},
 	expectEntities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	expectBaseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 }, {
 	about: "unpromulgate base entity with macaroon",
 	entities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	baseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 	id:   "~charmers/wordpress",
 	body: storetesting.JSONReader(params.PromulgateRequest{Promulgate: false}),
@@ -2235,7 +2235,7 @@ var promulgateTests = []struct {
 	},
 	expectStatus: http.StatusOK,
 	expectEntities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	expectBaseEntities: []*mongodoc.BaseEntity{
 		storetesting.NewBaseEntity("~charmers/wordpress").Build(),
@@ -2256,10 +2256,10 @@ var promulgateTests = []struct {
 	},
 	expectStatus: http.StatusOK,
 	expectEntities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	expectBaseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 }, {
 	about: "promulgate base entity with group macaroon",
@@ -2277,28 +2277,28 @@ var promulgateTests = []struct {
 	},
 	expectStatus: http.StatusOK,
 	expectEntities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	expectBaseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 }, {
 	about: "no authorisation",
 	entities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	baseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 	id:           "~charmers/wordpress",
 	body:         storetesting.JSONReader(params.PromulgateRequest{Promulgate: false}),
 	expectStatus: http.StatusProxyAuthRequired,
 	expectBody:   dischargeRequiredBody("http://0.1.2.3/"),
 	expectEntities: []*mongodoc.Entity{
-		storetesting.NewEntity("~charmers/trusty/wordpress-0").PromulgatedURL("trusty/wordpress-0").Build(),
+		storetesting.NewEntity("~charmers/trusty/wordpress-0").WithPromulgatedURL("trusty/wordpress-0").Build(),
 	},
 	expectBaseEntities: []*mongodoc.BaseEntity{
-		storetesting.NewBaseEntity("~charmers/wordpress").Promulgate().Build(),
+		storetesting.NewBaseEntity("~charmers/wordpress").WithPromulgated(true).Build(),
 	},
 }, {
 	about: "promulgate base entity with unauthorized user macaroon",
@@ -2333,7 +2333,7 @@ func (s *APISuite) TestPromulgate(c *gc.C) {
 		AuthPassword:     serverParams.AuthPassword,
 		IdentityLocation: "http://0.1.2.3/",
 		PublicKeyLocator: bakery.PublicKeyLocatorMap{
-			"http://0.1.2.3/": &publicKey,
+			"http://0.1.2.3/": &testPublicKey,
 		},
 	})
 	for i, test := range promulgateTests {

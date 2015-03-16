@@ -191,13 +191,13 @@ type PermRequest struct {
 }
 
 // PromulgatedResponse holds the result of an id/meta/promulgated GET request.
-// See TODO(mhilton)
+// See https://github.com/juju/charmstore/blob/v4/docs/API.md#get-idmetapromulgated
 type PromulgatedResponse struct {
 	Promulgated bool
 }
 
-// PromulgateRequest holds the request of an id/restricted/promulgate PUT request.
-// See TODO(mhilton)
+// PromulgateRequest holds the request of an id/promulgate PUT request.
+// See https://github.com/juju/charmstore/blob/v4/docs/API.md#put-idpromulgate
 type PromulgateRequest struct {
 	Promulgate bool
 }

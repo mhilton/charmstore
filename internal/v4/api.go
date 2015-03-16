@@ -27,6 +27,8 @@ import (
 	"gopkg.in/juju/charmstore.v4/params"
 )
 
+const promulgatorsGroup = "promulgators"
+
 var logger = loggo.GetLogger("charmstore.internal.v4")
 
 type Handler struct {
@@ -59,13 +61,13 @@ func New(store *charmstore.Store, config charmstore.ServerParams) *Handler {
 			"macaroon":           router.HandleJSON(h.serveMacaroon),
 		},
 		Id: map[string]router.IdHandler{
-			"archive":     h.idHandler(h.serveArchive),
-			"archive/":    h.idHandler(h.serveArchiveFile),
-			"diagram.svg": h.idHandler(h.serveDiagram),
-			"expand-id":   h.idHandler(h.serveExpandId),
-			"icon.svg":    h.idHandler(h.serveIcon),
-			"readme":      h.idHandler(h.serveReadMe),
-			"resources":   h.idHandler(h.serveResources),
+			"archive":     h.authIdHandler(h.serveArchive),
+			"archive/":    h.authIdHandler(h.serveArchiveFile),
+			"diagram.svg": h.authIdHandler(h.serveDiagram),
+			"expand-id":   h.authIdHandler(h.serveExpandId),
+			"icon.svg":    h.authIdHandler(h.serveIcon),
+			"readme":      h.authIdHandler(h.serveReadMe),
+			"resources":   h.authIdHandler(h.serveResources),
 			"promulgate":  h.serveAdminPromulgate,
 		},
 		Meta: map[string]router.BulkIncludeHandler{
@@ -711,7 +713,7 @@ func (h *Handler) putMetaPerm(id *charm.Reference, path string, val *json.RawMes
 }
 
 // GET id/meta/promulgated
-// TODO doc link
+// See https://github.com/juju/charmstore/blob/v4/docs/API.md#get-idmetapromulgated
 func (h *Handler) metaPromulgated(entity *mongodoc.BaseEntity, id *charm.Reference, path string, flags url.Values, req *http.Request) (interface{}, error) {
 	return params.PromulgatedResponse{
 		Promulgated: bool(entity.Promulgated),
@@ -828,9 +830,9 @@ func (h *Handler) serveMacaroon(_ http.Header, _ *http.Request) (interface{}, er
 }
 
 // GET id/promulgate
-// TODO (mhilton): document admin/promulgate endpoint
+// See https://github.com/juju/charmstore/blob/v4/docs/API.md#put-idpromulgate
 func (h *Handler) serveAdminPromulgate(id *charm.Reference, _ bool, w http.ResponseWriter, req *http.Request) error {
-	if err := h.authorize(req, []string{"promulgators"}); err != nil {
+	if err := h.authorize(req, []string{promulgatorsGroup}); err != nil {
 		return errgo.Mask(err, errgo.Any)
 	}
 	if req.Method != "PUT" {
@@ -844,19 +846,13 @@ func (h *Handler) serveAdminPromulgate(id *charm.Reference, _ bool, w http.Respo
 	if err := json.Unmarshal(data, &promulgate); err != nil {
 		return errgo.WithCausef(err, params.ErrBadRequest, "")
 	}
-	if promulgate.Promulgate {
-		if err := h.store.Promulgate(id); err != nil {
-			return errgo.Mask(err, errgo.Any)
-		}
-	} else {
-		if err := h.store.UpdateBaseEntity(id, bson.D{{"$set", bson.D{{"promulgated", mongodoc.IntBool(false)}}}}); err != nil {
-			return errgo.Mask(err, errgo.Any)
-		}
+	if err := h.store.SetPromulgated(id, promulgate.Promulgate); err != nil {
+		return errgo.Mask(err, errgo.Any)
 	}
 	return nil
 }
 
-func (h *Handler) idHandler(f router.IdHandler) router.IdHandler {
+func (h *Handler) authIdHandler(f router.IdHandler) router.IdHandler {
 	return func(charmId *charm.Reference, fullySpecified bool, w http.ResponseWriter, req *http.Request) error {
 		if err := h.authorizeEntity(charmId, req); err != nil {
 			return errgo.Mask(err, errgo.Any)
