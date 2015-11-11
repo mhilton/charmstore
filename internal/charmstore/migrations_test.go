@@ -33,10 +33,11 @@ func (s *migrationsSuite) SetUpTest(c *gc.C) {
 }
 
 var (
-	// migrationFields holds the fields added to mongodoc.Entity,
+	// migrationEntityFields holds the fields added to mongodoc.Entity,
 	// keyed by the migration step that added them.
 	migrationEntityFields = map[mongodoc.MigrationName][]string{
 		migrationAddSupportedSeries: {"supportedseries"},
+		migrationExpandEntityNames:  {"resolvednames", "unresolvednames"},
 	}
 
 	// initialFields holds all the mongodoc.Entity fields
@@ -78,7 +79,7 @@ var (
 )
 
 func init() {
-	// Initialize entityFields using the information specified in migrationFields.
+	// Initialize entityFields using the information specified in migrationEntityFields.
 	allFields := initialEntityFields
 	for _, m := range migrations {
 		entityFields[m.name] = allFields
@@ -286,8 +287,8 @@ func (s *migrationsSuite) TestMigrateParallelMigration(c *gc.C) {
 	// Ensure entities have been updated correctly by all the migrations.
 	// TODO when there are migrations, update e1 and e2 accordingly.
 	s.checkCount(c, s.db.Entities(), 2)
-	s.checkEntity(c, e1)
-	s.checkEntity(c, e2)
+	s.checkEntity(c, e1, finalEntityFields)
+	s.checkEntity(c, e2, finalEntityFields)
 }
 
 func (s *migrationsSuite) TestAddSupportedSeries(c *gc.C) {
@@ -316,7 +317,10 @@ func (s *migrationsSuite) TestAddSupportedSeries(c *gc.C) {
 	// Ensure entities have been updated correctly.
 	s.checkCount(c, s.db.Entities(), len(entities))
 	for _, e := range entities {
-		s.checkEntity(c, e)
+		s.checkEntity(c, e, append(
+			entityFields[migrationAddSupportedSeries],
+			migrationEntityFields[migrationAddSupportedSeries]...,
+		))
 	}
 }
 
@@ -341,12 +345,14 @@ func getMigrations(names ...mongodoc.MigrationName) (ms []migration) {
 	return ms
 }
 
-func (s *migrationsSuite) checkEntity(c *gc.C, expectEntity *mongodoc.Entity) {
+func (s *migrationsSuite) checkEntity(c *gc.C, expectEntity *mongodoc.Entity, includeFields []string) {
 	var entity mongodoc.Entity
 	err := s.db.Entities().FindId(expectEntity.URL).One(&entity)
 	c.Assert(err, gc.IsNil)
 
-	c.Assert(&entity, jc.DeepEquals, expectEntity)
+	obtained := entityWithFields(c, &entity, includeFields)
+	expected := entityWithFields(c, expectEntity, includeFields)
+	c.Assert(obtained, jc.DeepEquals, expected)
 }
 
 func (s *migrationsSuite) checkCount(c *gc.C, coll *mgo.Collection, expectCount int) {
@@ -373,6 +379,11 @@ func (s *migrationsSuite) checkBaseEntitiesCount(c *gc.C, expectCount int) {
 func (s *migrationsSuite) insertEntity(c *gc.C, e *mongodoc.Entity, includeFields []string) {
 	c.Assert(includeFields, gc.Not(gc.HasLen), 0)
 
+	err := s.db.Entities().Insert(entityWithFields(c, e, includeFields))
+	c.Assert(err, gc.IsNil)
+}
+
+func entityWithFields(c *gc.C, e *mongodoc.Entity, includeFields []string) map[string]interface{} {
 	data, err := bson.Marshal(e)
 	c.Assert(err, gc.IsNil)
 	var rawEntity map[string]interface{}
@@ -388,6 +399,5 @@ loop:
 		}
 		delete(rawEntity, k)
 	}
-	err = s.db.Entities().Insert(rawEntity)
-	c.Assert(err, gc.IsNil)
+	return rawEntity
 }

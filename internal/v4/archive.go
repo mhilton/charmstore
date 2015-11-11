@@ -558,11 +558,10 @@ func (h *ReqHandler) getNewPromulgatedRevision(id *charm.Reference) (int, error)
 	if baseEntity == nil || !baseEntity.Promulgated {
 		return -1, nil
 	}
-	query := h.Store.EntitiesQuery(&charm.Reference{
-		Series:   id.Series,
-		Name:     id.Name,
-		Revision: -1,
-	})
+	promulgated := *id
+	promulgated.Revision = -1
+	promulgated.User = ""
+	query := h.Store.EntitiesQuery(&promulgated)
 	var entity mongodoc.Entity
 	err = query.Sort("-promulgated-revision").Select(bson.D{{"promulgated-revision", 1}}).One(&entity)
 	if err == mgo.ErrNotFound {

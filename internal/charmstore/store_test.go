@@ -2455,7 +2455,7 @@ func (s *StoreSuite) TestAddAuditWithNoLumberjack(c *gc.C) {
 	})
 }
 
-func (s *StoreSuite) TestdenormalizeEntity(c *gc.C) {
+func (s *StoreSuite) TestDenormalizeEntity(c *gc.C) {
 	e := &mongodoc.Entity{
 		URL: charm.MustParseReference("~someone/utopic/acharm-45"),
 	}
@@ -2469,6 +2469,18 @@ func (s *StoreSuite) TestdenormalizeEntity(c *gc.C) {
 		Series:              "utopic",
 		PromulgatedRevision: -1,
 		SupportedSeries:     []string{"utopic"},
+		ResolvedNames: []*charm.Reference{
+			charm.MustParseReference("~someone/utopic/acharm-45"),
+		},
+		UnresolvedNames: []mongodoc.UnresolvedName{{
+			URL:      charm.MustParseReference("~someone/acharm"),
+			Series:   "utopic",
+			Revision: 45,
+		}, {
+			URL:      charm.MustParseReference("~someone/utopic/acharm"),
+			Series:   "utopic",
+			Revision: 45,
+		}},
 	})
 }
 
@@ -2488,6 +2500,27 @@ func (s *StoreSuite) TestDenormalizePromulgatedEntity(c *gc.C) {
 		PromulgatedURL:      charm.MustParseReference("utopic/acharm-5"),
 		PromulgatedRevision: 5,
 		SupportedSeries:     []string{"utopic"},
+		ResolvedNames: []*charm.Reference{
+			charm.MustParseReference("~someone/utopic/acharm-45"),
+			charm.MustParseReference("utopic/acharm-5"),
+		},
+		UnresolvedNames: []mongodoc.UnresolvedName{{
+			URL:      charm.MustParseReference("~someone/acharm"),
+			Series:   "utopic",
+			Revision: 45,
+		}, {
+			URL:      charm.MustParseReference("~someone/utopic/acharm"),
+			Series:   "utopic",
+			Revision: 45,
+		}, {
+			URL:      charm.MustParseReference("acharm"),
+			Series:   "utopic",
+			Revision: 5,
+		}, {
+			URL:      charm.MustParseReference("utopic/acharm"),
+			Series:   "utopic",
+			Revision: 5,
+		}},
 	})
 }
 
@@ -2504,6 +2537,19 @@ func (s *StoreSuite) TestDenormalizeBundleEntity(c *gc.C) {
 		Revision:            45,
 		Series:              "bundle",
 		PromulgatedRevision: -1,
+		ResolvedNames: []*charm.Reference{
+			charm.MustParseReference("~someone/bundle/acharm-45"),
+			charm.MustParseReference("~someone/acharm-45"),
+		},
+		UnresolvedNames: []mongodoc.UnresolvedName{{
+			URL:      charm.MustParseReference("~someone/acharm"),
+			Series:   "bundle",
+			Revision: 45,
+		}, {
+			URL:      charm.MustParseReference("~someone/bundle/acharm"),
+			Series:   "bundle",
+			Revision: 45,
+		}},
 	})
 }
 

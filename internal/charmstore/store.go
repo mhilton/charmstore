@@ -591,6 +591,62 @@ func denormalizeEntity(e *mongodoc.Entity) {
 	} else {
 		e.PromulgatedRevision = e.PromulgatedURL.Revision
 	}
+	e.ResolvedNames = resolvedNames(e.URL, e.SupportedSeries)
+	e.ResolvedNames = append(e.ResolvedNames, resolvedNames(e.PromulgatedURL, e.SupportedSeries)...)
+	e.UnresolvedNames = unresolvedNames(e.URL, e.SupportedSeries)
+	e.UnresolvedNames = append(e.UnresolvedNames, unresolvedNames(e.PromulgatedURL, e.SupportedSeries)...)
+}
+
+func resolvedNames(url *charm.Reference, supportedSeries []string) []*charm.Reference {
+	if url == nil {
+		return nil
+	}
+	names := []*charm.Reference{url}
+	switch url.Series {
+	case "bundle":
+		u := *url
+		u.Series = ""
+		names = append(names, &u)
+	case "":
+		for _, series := range supportedSeries {
+			u := *url
+			u.Series = series
+			names = append(names, &u)
+		}
+	}
+	return names
+}
+
+func unresolvedNames(url *charm.Reference, supportedSeries []string) []mongodoc.UnresolvedName {
+	if url == nil {
+		return nil
+	}
+	names := []mongodoc.UnresolvedName{}
+	var series []string
+	if url.Series == "" {
+		series = supportedSeries
+	} else {
+		series = []string{url.Series}
+	}
+	for _, s := range series {
+		nameOnly := *url
+		nameOnly.Revision = -1
+		nameOnly.Series = ""
+		names = append(names, mongodoc.UnresolvedName{
+			URL:      &nameOnly,
+			Series:   url.Series,
+			Revision: url.Revision,
+		})
+		nameAndSeries := *url
+		nameAndSeries.Revision = -1
+		nameAndSeries.Series = s
+		names = append(names, mongodoc.UnresolvedName{
+			URL:      &nameAndSeries,
+			Series:   url.Series,
+			Revision: url.Revision,
+		})
+	}
+	return names
 }
 
 var everyonePerm = []string{params.Everyone}
@@ -735,33 +791,10 @@ var seriesBundleOrEmpty = bson.D{{"$or", []bson.D{{{"series", "bundle"}}, {{"ser
 // the produced query will only match promulgated entities.
 func (s *Store) EntitiesQuery(url *charm.Reference) *mgo.Query {
 	entities := s.DB.Entities()
-	query := make(bson.D, 1, 4)
-	query[0] = bson.DocElem{"name", url.Name}
-	if url.User == "" {
-		if url.Revision > -1 {
-			query = append(query, bson.DocElem{"promulgated-revision", url.Revision})
-		} else {
-			query = append(query, bson.DocElem{"promulgated-revision", bson.D{{"$gt", -1}}})
-		}
-	} else {
-		query = append(query, bson.DocElem{"user", url.User})
-		if url.Revision > -1 {
-			query = append(query, bson.DocElem{"revision", url.Revision})
-		}
+	if url.Revision == -1 {
+		return entities.Find(bson.D{{"unresolvednames.url", url}})
 	}
-	if url.Series == "" {
-		if url.Revision > -1 {
-			// If we're specifying a revision we must be searching
-			// for a canonical URL, so search for a multi-series
-			// charm or a bundle.
-			query = append(query, seriesBundleOrEmpty...)
-		}
-	} else if url.Series == "bundle" {
-		query = append(query, bson.DocElem{"series", "bundle"})
-	} else {
-		query = append(query, bson.DocElem{"supportedseries", url.Series})
-	}
-	return entities.Find(query)
+	return entities.Find(bson.D{{"resolvednames", url}})
 }
 
 // FindBaseEntity finds the base entity in the store using the given URL,
@@ -949,6 +982,10 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 				{"$set", bson.D{
 					{"promulgated-url", &pID},
 					{"promulgated-revision", pID.Revision},
+				}},
+				{"$push", bson.D{
+					{"resolvednames", bson.D{{"$each", resolvedNames(&pID, []string{})}}},
+					{"unresolvednames", bson.D{{"$each", unresolvedNames(&pID, []string{})}}},
 				}},
 			},
 		)

@@ -1406,6 +1406,7 @@ func (s *ArchiveSuite) TestGetNewPromulgatedRevision(c *gc.C) {
 		})
 		c.Assert(err, gc.IsNil)
 	}
+
 	handler := s.handler(c)
 	defer handler.Close()
 	for i, test := range getNewPromulgatedRevisionTests {

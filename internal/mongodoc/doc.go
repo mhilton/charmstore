@@ -28,6 +28,14 @@ type Entity struct {
 	// e.g. cs:wordpress, cs:~user/foo
 	BaseURL *charm.Reference
 
+	// ResolvedNames contains the list of fully resolved names could be
+	// used to access this entity.
+	ResolvedNames []*charm.Reference
+
+	// UnresolvedNames contains the list of names that could refer to this entity,
+	// but could also refer to other entities, depending on the revision and series.
+	UnresolvedNames []UnresolvedName
+
 	// User holds the user part of the entity URL (for instance, "joe").
 	User string
 
@@ -114,6 +122,12 @@ type Entity struct {
 	// PromulgatedRevision holds the revision number from the promulgated URL.
 	// If the entity is not promulgated this should be set to -1.
 	PromulgatedRevision int `bson:"promulgated-revision"`
+}
+
+type UnresolvedName struct {
+	URL      *charm.Reference
+	Series   string
+	Revision int
 }
 
 // PreferredURL returns the preferred way to refer to this entity. If

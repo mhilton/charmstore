@@ -13,6 +13,7 @@ import (
 
 const (
 	migrationAddSupportedSeries mongodoc.MigrationName = "add supported series"
+	migrationExpandEntityNames                         = "expand entity names"
 )
 
 // migrations holds all the migration functions that are executed in the order
@@ -39,6 +40,9 @@ var migrations = []migration{{
 }, {
 	name:    migrationAddSupportedSeries,
 	migrate: addSupportedSeries,
+}, {
+	name:    migrationExpandEntityNames,
+	migrate: expandEntityNames,
 }}
 
 // migration holds a migration function with its corresponding name.
@@ -134,6 +138,46 @@ func addSupportedSeries(db StoreDatabase) error {
 	}
 	if err := iter.Close(); err != nil {
 		return errgo.Notef(err, "cannot iterate entities")
+	}
+	return nil
+}
+
+// addSupportedSeries adds the supported-series field
+// to entities that don't have it. Note that it does not
+// need to work for multi-series charms because support
+// for those has not been implemented before this migration.
+func expandEntityNames(db StoreDatabase) error {
+	entities := db.Entities()
+	var entity mongodoc.Entity
+	iter := entities.Find(bson.D{{
+		// Use the supportedseries field to collect not migrated entities.
+		"resolvednames", bson.D{{"$exists", false}},
+	}}).Select(bson.D{{"_id", 1}, {"promulgated-url", 1}, {"supportedseries", 1}}).Iter()
+	defer iter.Close()
+
+	for iter.Next(&entity) {
+		logger.Infof("updating %s", entity.URL)
+		rn := resolvedNames(entity.URL, entity.SupportedSeries)
+		rn = append(rn, resolvedNames(entity.PromulgatedURL, entity.SupportedSeries)...)
+		un := unresolvedNames(entity.URL, entity.SupportedSeries)
+		un = append(un, unresolvedNames(entity.PromulgatedURL, entity.SupportedSeries)...)
+		if err := entities.UpdateId(entity.URL, bson.D{{
+			"$set", bson.D{
+				{"resolvednames", rn},
+				{"unresolvednames", un},
+			},
+		}}); err != nil {
+			return errgo.Notef(err, "cannot denormalize entity id %s", entity.URL)
+		}
+	}
+	if err := iter.Close(); err != nil {
+		return errgo.Notef(err, "cannot iterate entities")
+	}
+	if err := entities.EnsureIndex(mgo.Index{Key: []string{"resolvednames"}, Unique: true}); err != nil {
+		return errgo.Notef(err, "connot create index on resolvednames")
+	}
+	if err := entities.EnsureIndex(mgo.Index{Key: []string{"unresolvednames"}, Unique: true}); err != nil {
+		return errgo.Notef(err, "connot create index on unresolvednames")
 	}
 	return nil
 }
